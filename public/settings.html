@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>airbnb.toastpit.de — Settings</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <div class="title">airbnb.toastpit.de</div>
+    <div class="sub">Settings • Tokens (id bleibt stabil, Name editierbar)</div>
+  </div>
+  <div class="top-actions">
+    <button id="btnBack" class="btn ghost">← Zurück</button>
+    <button id="btnReload" class="btn ghost">Reload</button>
+    <button id="btnLogout" class="btn ghost">Logout</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="panel-head">
+      <div class="h">Status</div>
+      <div class="panel-actions">
+        <input id="new_status" class="inp" placeholder="Neuer Status-Name…" />
+        <button id="add_status" class="btn tiny primary">+ Add</button>
+      </div>
+    </div>
+    <div id="list_status" class="token-list"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="h">Quelle</div>
+      <div class="panel-actions">
+        <input id="new_source" class="inp" placeholder="Neue Quelle…" />
+        <button id="add_source" class="btn tiny primary">+ Add</button>
+      </div>
+    </div>
+    <div id="list_source" class="token-list"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="h">Zahlstatus</div>
+      <div class="panel-actions">
+        <input id="new_paid" class="inp" placeholder="Neuer Zahlstatus…" />
+        <button id="add_paid" class="btn tiny primary">+ Add</button>
+      </div>
+    </div>
+    <div id="list_paid" class="token-list"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="h">Kurtaxe Status</div>
+      <div class="panel-actions">
+        <input id="new_kurtaxe" class="inp" placeholder="Neuer Kurtaxe-Status…" />
+        <button id="add_kurtaxe" class="btn tiny primary">+ Add</button>
+      </div>
+    </div>
+    <div id="list_kurtaxe" class="token-list"></div>
+  </section>
+
+  <div id="msg" class="hint muted" style="padding-top:10px;"></div>
+</main>
+
+<script src="/settings.js"></script>
+</body>
+</html>

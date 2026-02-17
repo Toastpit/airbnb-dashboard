@@ -1,0 +1,35 @@
+services:
+  app:
+    build: .
+    environment:
+      PORT: "3010"
+      DASH_PASS: ${DASH_PASS}
+      DB_FILE: /data/airbnb.sqlite
+      MAX_FAILS: "3"
+      LOCK_MINUTES: "15"
+      TRUST_PROXY: "1"
+    volumes:
+      - airbnb_data:/data
+    restart: unless-stopped
+    expose:
+      - "3010"   # nur intern fürs caddy-netz
+    ports:
+      - "3010:3010"
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - app
+
+volumes:
+  airbnb_data:
+  caddy_data:
+  caddy_config:
