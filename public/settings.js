@@ -26,6 +26,9 @@ const el = {
     add_kurtaxe: $("add_kurtaxe"),
     list_kurtaxe: $("list_kurtaxe"),
 
+    // Kurtaxe Config
+    list_kurtaxe_config: $("list_kurtaxe_config"),
+
     // Users
     usersPanel: $("usersPanel"),
     add_user_btn: $("add_user_btn"),
@@ -219,7 +222,64 @@ async function load() {
     el.usersPanel.style.display = "none";
   }
 
+  await loadKurtaxeConfig();
+
   setMsg("ok");
+}
+
+async function loadKurtaxeConfig() {
+  const data = await api("/api/kurtaxe-config");
+  renderKurtaxeConfig(data.config || []);
+}
+
+function renderKurtaxeConfig(config) {
+  el.list_kurtaxe_config.innerHTML = "";
+
+  if (!config.length) {
+    el.list_kurtaxe_config.innerHTML = `<div class="hint muted">Keine Konfiguration</div>`;
+    return;
+  }
+
+  for (const c of config) {
+    const row = document.createElement("div");
+    row.className = "token-row";
+    row.innerHTML = `
+      <div style="font-weight:600;color:#334155;">${esc(c.description)}</div>
+      <input type="number" class="inp" value="${c.age_min}" min="0" max="999" style="width:80px;" data-id="${c.id}" data-field="age_min" placeholder="Min">
+      <input type="number" class="inp" value="${c.age_max}" min="0" max="999" style="width:80px;" data-id="${c.id}" data-field="age_max" placeholder="Max">
+      <input type="number" class="inp" value="${c.rate_high_season}" step="0.01" style="width:100px;" data-id="${c.id}" data-field="rate_high_season" placeholder="Hauptsaison">
+      <input type="number" class="inp" value="${c.rate_low_season}" step="0.01" style="width:100px;" data-id="${c.id}" data-field="rate_low_season" placeholder="Nebensaison">
+      <button class="btn tiny primary" data-id="${c.id}" data-action="save">💾</button>
+    `;
+
+    el.list_kurtaxe_config.appendChild(row);
+  }
+
+  // Event listeners
+  el.list_kurtaxe_config.querySelectorAll("button[data-action='save']").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.dataset.id);
+      const row = btn.closest(".token-row");
+      const inputs = row.querySelectorAll("input");
+
+      const data = {};
+      inputs.forEach(inp => {
+        const field = inp.dataset.field;
+        if (field) data[field] = Number(inp.value) || 0;
+      });
+
+      setMsg("saving...");
+      try {
+        await api(`/api/kurtaxe-config/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(data)
+        });
+        setMsg("saved ✅");
+      } catch (e) {
+        setMsg(e.message, true);
+      }
+    });
+  });
 }
 
 async function loadUsers() {

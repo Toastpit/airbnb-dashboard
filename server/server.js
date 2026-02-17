@@ -3,7 +3,8 @@ import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
 import {
   listSettingItems, createSettingItem, updateSettingItem, deleteSettingItem,
-  listUsers, getUserByUsername, getUserById, createUser, updateUser, deleteUser, updateUserPassword
+  listUsers, getUserByUsername, getUserById, createUser, updateUser, deleteUser, updateUserPassword,
+  listKurtaxeConfig, updateKurtaxeConfig
 } from "./db.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,6 +202,7 @@ function sanitizeBooking(body) {
 
     notes: str(body?.notes, 5000),
     guest_name: str(body?.guest_name, 200),
+    guests: body?.guests ? JSON.stringify(body.guests) : null,
 
     created_at: nowIso,
     updated_at: nowIso
@@ -397,6 +399,25 @@ app.delete("/api/users/:id", requireAdmin, (req, res) => {
 
     const changes = deleteUser(db, id);
     if (!changes) return res.status(404).json({ error: "user not found" });
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+// ---- kurtaxe config routes
+app.get("/api/kurtaxe-config", requireAuth, (req, res) => {
+  res.json({ config: listKurtaxeConfig(db) });
+});
+
+app.put("/api/kurtaxe-config/:id", requireAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const changes = updateKurtaxeConfig(db, id, req.body);
+    if (!changes) return res.status(404).json({ error: "not found" });
 
     res.json({ ok: true });
   } catch (e) {

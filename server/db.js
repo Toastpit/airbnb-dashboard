@@ -32,6 +32,29 @@ function initUsers(db) {
   `);
 }
 
+// --------- KURTAXE CONFIG ----------
+function initKurtaxeConfig(db) {
+  ensureTable(db, `
+    CREATE TABLE IF NOT EXISTS kurtaxe_config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      age_min INTEGER NOT NULL,
+      age_max INTEGER NOT NULL,
+      rate_high_season REAL NOT NULL,
+      rate_low_season REAL NOT NULL,
+      description TEXT NOT NULL
+    );
+  `);
+
+  // Defaults nur wenn noch leer
+  const cnt = db.prepare(`SELECT COUNT(*) c FROM kurtaxe_config`).get().c;
+  if (cnt === 0) {
+    const ins = db.prepare(`INSERT INTO kurtaxe_config(age_min, age_max, rate_high_season, rate_low_season, description) VALUES (?,?,?,?,?)`);
+    ins.run(16, 999, 3.40, 1.70, "Erwachsene (ab 16 Jahre)");
+    ins.run(3, 15, 2.10, 1.00, "Kinder (3-15 Jahre)");
+    ins.run(0, 2, 0.00, 0.00, "Kleinkinder (0-2 Jahre)");
+  }
+}
+
 // --------- SETTINGS TABLES ----------
 function initSettings(db) {
   ensureTable(db, `
@@ -158,6 +181,30 @@ export function deleteSettingItem(db, type, id) {
   return db.prepare(`DELETE FROM setting_items WHERE type=? AND id=?`).run(type, id).changes;
 }
 
+// --------- KURTAXE CONFIG API ----------
+export function listKurtaxeConfig(db) {
+  return db.prepare(`SELECT * FROM kurtaxe_config ORDER BY age_min ASC`).all();
+}
+
+export function updateKurtaxeConfig(db, id, data) {
+  return db.prepare(`
+    UPDATE kurtaxe_config SET
+      age_min=?,
+      age_max=?,
+      rate_high_season=?,
+      rate_low_season=?,
+      description=?
+    WHERE id=?
+  `).run(
+    Math.trunc(Number(data.age_min || 0)),
+    Math.trunc(Number(data.age_max || 999)),
+    Number(data.rate_high_season || 0),
+    Number(data.rate_low_season || 0),
+    String(data.description || ""),
+    id
+  ).changes;
+}
+
 // --------- BOOKINGS (angepasst) ----------
 export function openDb(dbFile) {
   const db = new Database(dbFile);
@@ -207,9 +254,11 @@ export function openDb(dbFile) {
   `ALTER TABLE bookings ADD COLUMN laundry_fee REAL NOT NULL DEFAULT 0`
 );
   ensureColumn(db, "bookings", "kurtaxe_paid", `ALTER TABLE bookings ADD COLUMN kurtaxe_paid INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn(db, "bookings", "guests", `ALTER TABLE bookings ADD COLUMN guests TEXT DEFAULT NULL`);
 
   initUsers(db);
   initSettings(db);
+  initKurtaxeConfig(db);
   migrateBookingsToIds(db);
 
   return db;
@@ -296,7 +345,7 @@ export function getBooking(db, id) {
 export function insertBooking(db, b) {
   const stmt = db.prepare(`
     INSERT INTO bookings (
-  year, check_in, check_out, booked_at, persons, guest_name,
+  year, check_in, check_out, booked_at, persons, guest_name, guests,
   price_total, cleaning_fee, cleaning_paid,
   kurtaxe_total, kurtaxe_paid, kurkarte_included,
   laundry_booked, laundry_included, laundry_paid, laundry_fee,
@@ -304,7 +353,7 @@ export function insertBooking(db, b) {
   status_id, source_id, paid_status_id, kurtaxe_status_id,
   status, source, paid_status, kurtaxe_status
 ) VALUES (
-  @year, @check_in, @check_out, @booked_at, @persons, @guest_name,
+  @year, @check_in, @check_out, @booked_at, @persons, @guest_name, @guests,
   @price_total, @cleaning_fee, @cleaning_paid,
   @kurtaxe_total, @kurtaxe_paid, @kurkarte_included,
   @laundry_booked, @laundry_included, @laundry_paid, @laundry_fee,
@@ -324,7 +373,7 @@ export function updateBooking(db, id, b) {
     UPDATE bookings SET
       year=@year,
       check_in=@check_in, check_out=@check_out, booked_at=@booked_at,
-      persons=@persons, guest_name=@guest_name,
+      persons=@persons, guest_name=@guest_name, guests=@guests,
       price_total=@price_total,
       cleaning_fee=@cleaning_fee, cleaning_paid=@cleaning_paid,
       kurtaxe_total=@kurtaxe_total, kurtaxe_paid=@kurtaxe_paid, kurkarte_included=@kurkarte_included,

@@ -1,5 +1,22 @@
 const $ = (id) => document.getElementById(id);
 
+// Toast-Notification System
+function showToast(message, type = "success") {
+  const container = $("toastContainer") || document.body;
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+
+  const icon = type === "success" ? "✓" : type === "error" ? "✕" : "ℹ";
+  toast.innerHTML = `<span style="font-size:18px;">${icon}</span><span>${escapeHtml(message)}</span>`;
+
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.animation = "slideOut 0.3s ease";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
 const el = {
   yearSel: $("yearSel"),
   btnReload: $("btnReload"),
@@ -49,6 +66,10 @@ const el = {
   f_l_fee: $("f_l_fee"),
   f_notes: $("f_notes"),
   f_guest: $("f_guest"),
+
+  guestsList: $("guestsList"),
+  btnAddGuest: $("btnAddGuest"),
+  btnCalcKurtaxe: $("btnCalcKurtaxe"),
 };
 
 let state = { years: [], year: 2026, bookings: [] };
@@ -57,6 +78,9 @@ let session = { isAdmin: false, viewer: false, editor: false, statistics: false 
 
 let tokens = { status: [], source: [], paid: [], kurtaxe: [] };
 let tokenMap = { status: {}, source: {}, paid: {}, kurtaxe: {} }; // id -> item
+
+let guests = []; // {name: "", age: 0}
+let kurtaxeConfig = [];
 
 function buildTokenMaps() {
   tokenMap = { status: {}, source: {}, paid: {}, kurtaxe: {} };
@@ -89,6 +113,160 @@ async function loadTokens() {
   tokens.paid = data.paid || [];
   tokens.kurtaxe = data.kurtaxe || [];
   buildTokenMaps();
+}
+
+async function loadKurtaxeConfig() {
+  try {
+    const data = await authed("/api/kurtaxe-config");
+    kurtaxeConfig = data.config || [];
+  } catch (e) {
+    console.error("Kurtaxe config load failed", e);
+  }
+}
+
+// Gäste-Verwaltung
+function renderGuests() {
+  el.guestsList.innerHTML = "";
+
+  if (!guests.length) {
+    el.guestsList.innerHTML = '<div class="hint muted">Keine Gäste hinzugefügt</div>';
+    return;
+  }
+
+  guests.forEach((guest, idx) => {
+    const div = document.createElement("div");
+    div.className = "guest-item";
+    div.innerHTML = `
+      <input type="text" placeholder="Name" value="${escapeHtml(guest.name || "")}" data-idx="${idx}" data-field="name">
+      <input type="number" placeholder="Alter" value="${guest.age || 0}" min="0" max="120" data-idx="${idx}" data-field="age">
+      <button type="button" class="btn tiny ghost" data-idx="${idx}" data-action="remove">🗑</button>
+    `;
+    el.guestsList.appendChild(div);
+  });
+
+  // Event listeners
+  el.guestsList.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      const idx = Number(e.target.dataset.idx);
+      const field = e.target.dataset.field;
+      if (field === "name") guests[idx].name = e.target.value;
+      else if (field === "age") guests[idx].age = Number(e.target.value) || 0;
+    });
+  });
+
+  el.guestsList.querySelectorAll("button[data-action='remove']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      guests.splice(idx, 1);
+      renderGuests();
+    });
+  });
+}
+
+function addGuest() {
+  if (guests.length >= 4) {
+    showToast("Maximal 4 Gäste möglich", "error");
+    return;
+  }
+  guests.push({ name: "", age: 0 });
+  renderGuests();
+}
+
+// Kurtaxe-Berechnung
+function isHighSeason(date) {
+  const d = new Date(date);
+  const month = d.getMonth() + 1; // 1-12
+  const day = d.getDate();
+
+  // Hauptsaison: 15. März - 31. Oktober
+  if (month > 3 && month < 11) return true; // April-Oktober
+  if (month === 3 && day >= 15) return true; // ab 15. März
+  if (month === 11 && day <= 31) return false; // November
+  return false;
+}
+
+function calculateKurtaxe() {
+  const checkIn = el.f_in.value;
+  const checkOut = el.f_out.value;
+
+  if (!checkIn || !checkOut) {
+    showToast("Check-in und Check-out erforderlich", "error");
+    return;
+  }
+
+  if (!guests.length) {
+    showToast("Bitte Gäste hinzufügen", "error");
+    return;
+  }
+
+  const days = calculateDays(checkIn, checkOut);
+  if (days <= 0) {
+    showToast("Ungültige Daten", "error");
+    return;
+  }
+
+  console.log("=== Kurtaxe Berechnung ===");
+  console.log("Gäste:", guests);
+  console.log("Kurtaxe Config:", kurtaxeConfig);
+  console.log("Tage:", days);
+
+  let total = 0;
+  let highSeasonNights = 0;
+  let lowSeasonNights = 0;
+
+  // Berechne jede einzelne Nacht separat
+  const startDate = new Date(checkIn);
+
+  for (let i = 0; i < days; i++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(startDate.getDate() + i);
+
+    const dateString = currentDate.toISOString().split('T')[0];
+    const isHigh = isHighSeason(dateString);
+
+    console.log(`Nacht ${i}: ${dateString}, Saison: ${isHigh ? 'Haupt' : 'Neben'}`);
+
+    if (isHigh) highSeasonNights++;
+    else lowSeasonNights++;
+
+    // Für jeden Gast die passende Rate für diese Nacht finden
+    guests.forEach((guest, guestIdx) => {
+      console.log(`  Gast ${guestIdx}: Alter=${guest.age}`);
+
+      if (!guest.age && guest.age !== 0) {
+        console.log(`    -> Übersprungen (kein Alter)`);
+        return;
+      }
+
+      // Finde passende Kurtaxe-Config basierend auf Alter
+      const config = kurtaxeConfig.find(c => guest.age >= c.age_min && guest.age <= c.age_max);
+      console.log(`    -> Config gefunden:`, config);
+
+      if (!config) {
+        console.log(`    -> Keine Config für Alter ${guest.age}`);
+        return;
+      }
+
+      // Wähle Rate basierend auf Saison dieser Nacht
+      const rate = isHigh ? config.rate_high_season : config.rate_low_season;
+      console.log(`    -> Rate: ${rate}€`);
+      total += rate;
+    });
+  }
+
+  console.log("Gesamt:", total);
+  el.f_kt.value = total.toFixed(2);
+
+  let msg = `Kurtaxe berechnet: ${total.toFixed(2)} € (${guests.length} Gäste)`;
+  if (highSeasonNights > 0 && lowSeasonNights > 0) {
+    msg += `\n${highSeasonNights}× Hauptsaison + ${lowSeasonNights}× Nebensaison`;
+  } else if (highSeasonNights > 0) {
+    msg += `\n${highSeasonNights} Nächte Hauptsaison`;
+  } else {
+    msg += `\n${lowSeasonNights} Nächte Nebensaison`;
+  }
+
+  showToast(msg, "success");
 }
 
 
@@ -152,6 +330,13 @@ function fillForm(b) {
   fillSelect(el.f_paid, tokens.paid, b.paid_status_id, "pay_unpaid");
   fillSelect(el.f_kt_status, tokens.kurtaxe, b.kurtaxe_status_id, "kt_open");
 
+  // Gäste laden
+  try {
+    guests = b.guests ? JSON.parse(b.guests) : [];
+  } catch (e) {
+    guests = [];
+  }
+  renderGuests();
 }
 
 function readForm() {
@@ -178,6 +363,7 @@ function readForm() {
     laundry_fee: Number(el.f_l_fee.value || 0),
     notes: el.f_notes.value || "",
     guest_name: el.f_guest.value?.trim() || "",
+    guests: guests.length > 0 ? guests : null,
     status_id: el.f_status.value,
     source_id: el.f_source.value,
     paid_status_id: el.f_paid.value,
@@ -349,6 +535,8 @@ function openCreateDialog() {
   el.btnDelete.style.display = "none";
   el.dlgTitle.textContent = "Eintrag (neu)";
 
+  guests = []; // Gäste-Liste leeren
+
   fillForm({
     year: state.year,
     status_id: "st_inquiry",
@@ -420,21 +608,34 @@ el.username.addEventListener("keydown", (e) => { if (e.key === "Enter") login();
 el.pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
 
 el.btnLogout.addEventListener("click", logout);
-el.btnReload.addEventListener("click", async () => { await loadYears(); await loadTokens(); await loadBookings(); });
+el.btnReload.addEventListener("click", async () => { await loadYears(); await loadTokens(); await loadKurtaxeConfig(); await loadBookings(); });
 el.btnAdd.addEventListener("click", (e) => { e.preventDefault(); openCreateDialog(); });
 el.yearSel.addEventListener("change", loadBookings);
+
+el.btnAddGuest.addEventListener("click", addGuest);
+el.btnCalcKurtaxe.addEventListener("click", calculateKurtaxe);
 
 el.btnSave.addEventListener("click", async (e) => {
   e.preventDefault();
   e.stopPropagation();
 
   const payload = readForm();
-  if (!payload.check_in || !payload.check_out) return alert("Check-in / Check-out fehlt");
+  if (!payload.check_in || !payload.check_out) {
+    showToast("Check-in / Check-out fehlt", "error");
+    return;
+  }
 
-  if (editingId == null) {
-    await authed("/api/bookings", { method: "POST", body: JSON.stringify(payload) });
-  } else {
-    await authed(`/api/bookings/${editingId}`, { method: "PUT", body: JSON.stringify(payload) });
+  try {
+    if (editingId == null) {
+      await authed("/api/bookings", { method: "POST", body: JSON.stringify(payload) });
+      showToast("Buchung erstellt ✓", "success");
+    } else {
+      await authed(`/api/bookings/${editingId}`, { method: "PUT", body: JSON.stringify(payload) });
+      showToast("Buchung gespeichert ✓", "success");
+    }
+  } catch (e) {
+    showToast(e.message || "Fehler beim Speichern", "error");
+    return;
   }
 
   el.dlg.close();
@@ -490,6 +691,7 @@ el.btnDelete.addEventListener("click", async (e) => {
   showLoggedIn(ok);
   if (ok) {
     await loadTokens();
+    await loadKurtaxeConfig();
     await loadBookings();
   }
 })();

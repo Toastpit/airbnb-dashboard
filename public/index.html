@@ -88,11 +88,22 @@
     </div>
 
     <div class="dlg-section">
+      <div class="section-title">👥 Gäste-Details (für Kurtaxe-Berechnung)</div>
+      <div id="guestsList"></div>
+      <button type="button" id="btnAddGuest" class="btn tiny ghost" style="margin-top:10px;">+ Gast hinzufügen</button>
+    </div>
+
+    <div class="dlg-section">
       <div class="section-title">Preise & Gebühren</div>
       <div class="grid">
         <label>Preis total <input id="f_price" type="number" step="0.01"></label>
         <label>Reinigung <input id="f_clean" type="number" step="0.01"></label>
-        <label>Kurtaxe <input id="f_kt" type="number" step="0.01"></label>
+        <label>Kurtaxe
+          <div style="display:flex;gap:8px;">
+            <input id="f_kt" type="number" step="0.01" style="flex:1;">
+            <button type="button" id="btnCalcKurtaxe" class="btn tiny primary" title="Automatisch berechnen">⚡</button>
+          </div>
+        </label>
         <label>Wäsche Preis <input id="f_l_fee" type="number" step="0.01"></label>
 
         <label>Kurtaxe Status
@@ -138,6 +149,8 @@
     </div>
   </form>
 </dialog>
+
+<div id="toastContainer" class="toast-container"></div>
 
 <script src="/app.js"></script>
 </body>
