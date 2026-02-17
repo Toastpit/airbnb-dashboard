@@ -408,7 +408,9 @@ app.delete("/api/users/:id", requireAdmin, (req, res) => {
 
 // ---- kurtaxe config routes
 app.get("/api/kurtaxe-config", requireAuth, (req, res) => {
-  res.json({ config: listKurtaxeConfig(db) });
+  const config = listKurtaxeConfig(db);
+  console.log("📊 GET /api/kurtaxe-config - returning", config.length, "entries:", config);
+  res.json({ config });
 });
 
 app.put("/api/kurtaxe-config/:id", requireAdmin, (req, res) => {

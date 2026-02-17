@@ -117,10 +117,16 @@ async function loadTokens() {
 
 async function loadKurtaxeConfig() {
   try {
+    console.log("Loading kurtaxe config...");
     const data = await authed("/api/kurtaxe-config");
     kurtaxeConfig = data.config || [];
+    console.log("Kurtaxe config loaded:", kurtaxeConfig);
+    if (!kurtaxeConfig.length) {
+      console.warn("⚠️ Kurtaxe config ist leer!");
+    }
   } catch (e) {
-    console.error("Kurtaxe config load failed", e);
+    console.error("❌ Kurtaxe config load FAILED:", e);
+    kurtaxeConfig = [];
   }
 }
 
@@ -186,6 +192,11 @@ function calculateKurtaxe() {
   const checkIn = el.f_in.value;
   const checkOut = el.f_out.value;
 
+  console.log("=== Calculate Kurtaxe ===");
+  console.log("Guests:", guests);
+  console.log("kurtaxeConfig available:", kurtaxeConfig);
+  console.log("kurtaxeConfig.length:", kurtaxeConfig.length);
+
   if (!checkIn || !checkOut) {
     showToast("Check-in und Check-out erforderlich", "error");
     return;
@@ -193,6 +204,12 @@ function calculateKurtaxe() {
 
   if (!guests.length) {
     showToast("Bitte Gäste hinzufügen", "error");
+    return;
+  }
+
+  if (!kurtaxeConfig || !kurtaxeConfig.length) {
+    showToast("⚠️ Kurtaxe-Konfiguration nicht geladen! Bitte Seite neu laden.", "error");
+    console.error("kurtaxeConfig ist leer oder undefined");
     return;
   }
 

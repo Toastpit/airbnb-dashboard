@@ -47,11 +47,19 @@ function initKurtaxeConfig(db) {
 
   // Defaults nur wenn noch leer
   const cnt = db.prepare(`SELECT COUNT(*) c FROM kurtaxe_config`).get().c;
+  console.log(`🔧 initKurtaxeConfig: Found ${cnt} existing entries`);
+
   if (cnt === 0) {
+    console.log("📝 Inserting default kurtaxe config values...");
     const ins = db.prepare(`INSERT INTO kurtaxe_config(age_min, age_max, rate_high_season, rate_low_season, description) VALUES (?,?,?,?,?)`);
     ins.run(16, 999, 3.40, 1.70, "Erwachsene (ab 16 Jahre)");
     ins.run(3, 15, 2.10, 1.00, "Kinder (3-15 Jahre)");
     ins.run(0, 2, 0.00, 0.00, "Kleinkinder (0-2 Jahre)");
+    console.log("✅ Default kurtaxe config inserted");
+  } else {
+    // Show existing entries for debugging
+    const existing = db.prepare(`SELECT * FROM kurtaxe_config ORDER BY age_min ASC`).all();
+    console.log("📋 Existing kurtaxe config:", existing);
   }
 }
 
