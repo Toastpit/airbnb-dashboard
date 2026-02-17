@@ -202,11 +202,6 @@ function calculateKurtaxe() {
     return;
   }
 
-  console.log("=== Kurtaxe Berechnung ===");
-  console.log("Gäste:", guests);
-  console.log("Kurtaxe Config:", kurtaxeConfig);
-  console.log("Tage:", days);
-
   let total = 0;
   let highSeasonNights = 0;
   let lowSeasonNights = 0;
@@ -221,37 +216,23 @@ function calculateKurtaxe() {
     const dateString = currentDate.toISOString().split('T')[0];
     const isHigh = isHighSeason(dateString);
 
-    console.log(`Nacht ${i}: ${dateString}, Saison: ${isHigh ? 'Haupt' : 'Neben'}`);
-
     if (isHigh) highSeasonNights++;
     else lowSeasonNights++;
 
     // Für jeden Gast die passende Rate für diese Nacht finden
-    guests.forEach((guest, guestIdx) => {
-      console.log(`  Gast ${guestIdx}: Alter=${guest.age}`);
-
-      if (!guest.age && guest.age !== 0) {
-        console.log(`    -> Übersprungen (kein Alter)`);
-        return;
-      }
+    guests.forEach(guest => {
+      if (!guest.age && guest.age !== 0) return;
 
       // Finde passende Kurtaxe-Config basierend auf Alter
       const config = kurtaxeConfig.find(c => guest.age >= c.age_min && guest.age <= c.age_max);
-      console.log(`    -> Config gefunden:`, config);
-
-      if (!config) {
-        console.log(`    -> Keine Config für Alter ${guest.age}`);
-        return;
-      }
+      if (!config) return;
 
       // Wähle Rate basierend auf Saison dieser Nacht
       const rate = isHigh ? config.rate_high_season : config.rate_low_season;
-      console.log(`    -> Rate: ${rate}€`);
       total += rate;
     });
   }
 
-  console.log("Gesamt:", total);
   el.f_kt.value = total.toFixed(2);
 
   let msg = `Kurtaxe berechnet: ${total.toFixed(2)} € (${guests.length} Gäste)`;

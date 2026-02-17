@@ -240,11 +240,24 @@ function renderKurtaxeConfig(config) {
     return;
   }
 
+  // Header Row
+  const header = document.createElement("div");
+  header.className = "kurtaxe-header";
+  header.innerHTML = `
+    <div style="font-weight:600;color:#475569;font-size:12px;">Beschreibung</div>
+    <div style="font-weight:600;color:#475569;font-size:12px;">Alter Min</div>
+    <div style="font-weight:600;color:#475569;font-size:12px;">Alter Max</div>
+    <div style="font-weight:600;color:#475569;font-size:12px;">Hauptsaison €</div>
+    <div style="font-weight:600;color:#475569;font-size:12px;">Nebensaison €</div>
+    <div></div>
+  `;
+  el.list_kurtaxe_config.appendChild(header);
+
   for (const c of config) {
     const row = document.createElement("div");
-    row.className = "token-row";
+    row.className = "kurtaxe-row";
     row.innerHTML = `
-      <div style="font-weight:600;color:#334155;">${esc(c.description)}</div>
+      <input type="text" class="inp" value="${esc(c.description)}" style="width:200px;" data-id="${c.id}" data-field="description" placeholder="Beschreibung">
       <input type="number" class="inp" value="${c.age_min}" min="0" max="999" style="width:80px;" data-id="${c.id}" data-field="age_min" placeholder="Min">
       <input type="number" class="inp" value="${c.age_max}" min="0" max="999" style="width:80px;" data-id="${c.id}" data-field="age_max" placeholder="Max">
       <input type="number" class="inp" value="${c.rate_high_season}" step="0.01" style="width:100px;" data-id="${c.id}" data-field="rate_high_season" placeholder="Hauptsaison">
@@ -259,13 +272,20 @@ function renderKurtaxeConfig(config) {
   el.list_kurtaxe_config.querySelectorAll("button[data-action='save']").forEach(btn => {
     btn.addEventListener("click", async () => {
       const id = Number(btn.dataset.id);
-      const row = btn.closest(".token-row");
+      const row = btn.closest(".kurtaxe-row");
       const inputs = row.querySelectorAll("input");
 
       const data = {};
       inputs.forEach(inp => {
         const field = inp.dataset.field;
-        if (field) data[field] = Number(inp.value) || 0;
+        if (!field) return;
+
+        // Beschreibung als String, Rest als Number
+        if (field === "description") {
+          data[field] = String(inp.value || "").trim();
+        } else {
+          data[field] = Number(inp.value) || 0;
+        }
       });
 
       setMsg("saving...");
@@ -275,6 +295,7 @@ function renderKurtaxeConfig(config) {
           body: JSON.stringify(data)
         });
         setMsg("saved ✅");
+        await loadKurtaxeConfig(); // Reload to show updated data
       } catch (e) {
         setMsg(e.message, true);
       }
