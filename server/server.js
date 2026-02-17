@@ -2,7 +2,8 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
 import {
-  listSettingItems, createSettingItem, updateSettingItem, deleteSettingItem
+  listSettingItems, createSettingItem, updateSettingItem, deleteSettingItem,
+  listUsers, getUserByUsername, getUserById, createUser, updateUser, deleteUser, updateUserPassword
 } from "./db.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +45,7 @@ app.use(express.static(path.join(__dirname, "../public")));
 
 
 // ---- in-memory auth & lockout (pro IP)
-const sessions = new Map(); // sid -> { createdAt }
+const sessions = new Map(); // sid -> { createdAt, isAdmin, userId, viewer, editor, statistics }
 const failMap = new Map();  // ip -> { fails, lockUntil }
 
 function ipOf(req) {
@@ -86,7 +87,37 @@ function resetFails(ip) {
 function requireAuth(req, res, next) {
   const sid = req.cookies?.sid;
   if (!sid || !sessions.has(sid)) return res.status(401).json({ error: "unauthorized" });
+  req.session = sessions.get(sid);
   next();
+}
+
+function requireAdmin(req, res, next) {
+  const sid = req.cookies?.sid;
+  if (!sid || !sessions.has(sid)) return res.status(401).json({ error: "unauthorized" });
+  req.session = sessions.get(sid);
+  if (!req.session.isAdmin) return res.status(403).json({ error: "admin_only" });
+  next();
+}
+
+function requireViewer(req, res, next) {
+  requireAuth(req, res, () => {
+    if (req.session.isAdmin || req.session.viewer) return next();
+    res.status(403).json({ error: "viewer_required" });
+  });
+}
+
+function requireEditor(req, res, next) {
+  requireAuth(req, res, () => {
+    if (req.session.isAdmin || req.session.editor) return next();
+    res.status(403).json({ error: "editor_required" });
+  });
+}
+
+function requireStatistics(req, res, next) {
+  requireAuth(req, res, () => {
+    if (req.session.isAdmin || req.session.statistics) return next();
+    res.status(403).json({ error: "statistics_required" });
+  });
 }
 
 // ---- helpers
@@ -160,6 +191,7 @@ function sanitizeBooking(body) {
     cleaning_fee: cleaning_fee,
     cleaning_paid: normBool(body?.cleaning_paid),
     kurtaxe_total: num(body?.kurtaxe_total, 0),
+    kurtaxe_paid: normBool(body?.kurtaxe_paid),
     kurkarte_included: normBool(body?.kurkarte_included),
 
     laundry_booked,
@@ -186,11 +218,56 @@ app.post("/api/login", (req, res) => {
     return res.status(429).json({ error: "locked", retryAt: r.lockUntil });
   }
 
+  const username = String(req.body?.username || "").trim();
   const pass = String(req.body?.password || "");
-  if (pass !== PASS) {
+
+  let sessionData = null;
+
+  // Admin login (kein Username, nur Password aus .env)
+  if (!username && pass === PASS) {
+    sessionData = {
+      createdAt: Date.now(),
+      isAdmin: true,
+      userId: null,
+      viewer: true,
+      editor: true,
+      statistics: true
+    };
+  }
+  // User login (Username + Password aus DB)
+  else if (username) {
+    const user = getUserByUsername(db, username);
+    if (!user || user.password_hash !== pass) {
+      const r = registerFail(ip);
+      return res.status(401).json({
+        error: "bad_credentials",
+        fails: r.fails,
+        locked: isLocked(ip),
+        lockMinutes: LOCK_MINUTES
+      });
+    }
+
+    // Check if user has at least one permission
+    if (!user.viewer && !user.editor && !user.statistics) {
+      return res.status(403).json({ error: "no_permissions" });
+    }
+
+    sessionData = {
+      createdAt: Date.now(),
+      isAdmin: false,
+      userId: user.id,
+      username: user.username,
+      name: user.name,
+      viewer: Boolean(user.viewer),
+      editor: Boolean(user.editor),
+      statistics: Boolean(user.statistics)
+    };
+  }
+  // Weder Admin noch User - falsche Credentials
+  else {
     const r = registerFail(ip);
     return res.status(401).json({
-      error: "bad_password",
+      error: "bad_credentials",
       fails: r.fails,
       locked: isLocked(ip),
       lockMinutes: LOCK_MINUTES
@@ -199,17 +276,24 @@ app.post("/api/login", (req, res) => {
 
   resetFails(ip);
   const sid = crypto.randomBytes(24).toString("hex");
-  sessions.set(sid, { createdAt: Date.now() });
+  sessions.set(sid, sessionData);
 
   // cookie: sameSite lax reicht für subdomain
   res.cookie("sid", sid, {
     httpOnly: true,
     sameSite: "lax",
-    secure: true, // nur ok wenn du https hast (du hast vermutlich certbot)
+    secure: true,
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    isAdmin: sessionData.isAdmin,
+    viewer: sessionData.viewer,
+    editor: sessionData.editor,
+    statistics: sessionData.statistics,
+    name: sessionData.name || "Admin"
+  });
 });
 
 app.post("/api/logout", (req, res) => {
@@ -217,6 +301,107 @@ app.post("/api/logout", (req, res) => {
   if (sid) sessions.delete(sid);
   res.clearCookie("sid");
   res.json({ ok: true });
+});
+
+app.get("/api/session", requireAuth, (req, res) => {
+  res.json({
+    isAdmin: req.session.isAdmin || false,
+    viewer: req.session.viewer || false,
+    editor: req.session.editor || false,
+    statistics: req.session.statistics || false,
+    name: req.session.name || "Admin"
+  });
+});
+
+// ---- user management routes (admin only)
+app.get("/api/users", requireAdmin, (req, res) => {
+  res.json({ users: listUsers(db) });
+});
+
+app.post("/api/users", requireAdmin, (req, res) => {
+  try {
+    const username = String(req.body?.username || "").trim();
+    const password = String(req.body?.password || "").trim();
+    const name = String(req.body?.name || "").trim();
+
+    if (!username || !password || !name) {
+      return res.status(400).json({ error: "username, password, name required" });
+    }
+
+    const viewer = req.body?.viewer ? 1 : 0;
+    const editor = req.body?.editor ? 1 : 0;
+    const statistics = req.body?.statistics ? 1 : 0;
+
+    const userId = createUser(db, {
+      username,
+      password_hash: password,
+      name,
+      viewer,
+      editor,
+      statistics,
+      active: 1
+    });
+
+    res.json({ ok: true, id: userId });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+app.put("/api/users/:id", requireAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const username = String(req.body?.username || "").trim();
+    const name = String(req.body?.name || "").trim();
+
+    if (!username || !name) {
+      return res.status(400).json({ error: "username, name required" });
+    }
+
+    const viewer = req.body?.viewer ? 1 : 0;
+    const editor = req.body?.editor ? 1 : 0;
+    const statistics = req.body?.statistics ? 1 : 0;
+    const active = req.body?.active !== undefined ? (req.body.active ? 1 : 0) : 1;
+
+    const changes = updateUser(db, id, {
+      username,
+      name,
+      viewer,
+      editor,
+      statistics,
+      active
+    });
+
+    if (!changes) return res.status(404).json({ error: "user not found" });
+
+    // Update password if provided
+    if (req.body?.password) {
+      const password = String(req.body.password).trim();
+      if (password) {
+        updateUserPassword(db, id, password);
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/users/:id", requireAdmin, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const changes = deleteUser(db, id);
+    if (!changes) return res.status(404).json({ error: "user not found" });
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: String(e?.message || e) });
+  }
 });
 
 // ---- data routes
@@ -260,7 +445,8 @@ app.put("/api/settings/:type/:id", requireAuth, (req, res) => {
     const patch = {
       name: typeof req.body?.name === "string" ? req.body.name.trim() : undefined,
       active: (req.body?.active === undefined) ? undefined : (req.body.active ? 1 : 0),
-      sort: (req.body?.sort === undefined) ? undefined : Number(req.body.sort)
+      sort: (req.body?.sort === undefined) ? undefined : Number(req.body.sort),
+      color: (req.body?.color === undefined) ? undefined : (req.body.color || null)
     };
     const changes = updateSettingItem(db, type, id, patch);
     if (!changes) return res.status(404).json({ error: "not_found" });
@@ -289,17 +475,17 @@ app.delete("/api/settings/:type/:id", requireAuth, (req, res) => {
   }
 });
 
-app.get("/api/years", requireAuth, (req, res) => {
+app.get("/api/years", requireViewer, (req, res) => {
   res.json({ years: listYears(db) });
 });
 
-app.get("/api/bookings", requireAuth, (req, res) => {
+app.get("/api/bookings", requireViewer, (req, res) => {
   const year = Number(req.query?.year);
   if (!year) return res.status(400).json({ error: "year missing" });
   res.json({ bookings: listBookings(db, year) });
 });
 
-app.post("/api/bookings", requireAuth, (req, res) => {
+app.post("/api/bookings", requireEditor, (req, res) => {
   try {
     const b = sanitizeBooking(req.body);
     const id = insertBooking(db, b);
@@ -309,7 +495,7 @@ app.post("/api/bookings", requireAuth, (req, res) => {
   }
 });
 
-app.put("/api/bookings/:id", requireAuth, (req, res) => {
+app.put("/api/bookings/:id", requireEditor, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "bad id" });
 
@@ -325,7 +511,7 @@ app.put("/api/bookings/:id", requireAuth, (req, res) => {
   }
 });
 
-app.get("/api/bookings/:id", requireAuth, (req, res) => {
+app.get("/api/bookings/:id", requireViewer, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "bad id" });
 
@@ -336,7 +522,7 @@ app.get("/api/bookings/:id", requireAuth, (req, res) => {
 });
 
 
-app.delete("/api/bookings/:id", requireAuth, (req, res) => {
+app.delete("/api/bookings/:id", requireEditor, (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: "bad id" });
   const changes = deleteBooking(db, id);

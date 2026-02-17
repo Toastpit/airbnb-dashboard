@@ -25,7 +25,25 @@ const el = {
     new_kurtaxe: $("new_kurtaxe"),
     add_kurtaxe: $("add_kurtaxe"),
     list_kurtaxe: $("list_kurtaxe"),
+
+    // Users
+    usersPanel: $("usersPanel"),
+    add_user_btn: $("add_user_btn"),
+    list_users: $("list_users"),
+    dlgUser: $("dlgUser"),
+    userDlgTitle: $("userDlgTitle"),
+    u_username: $("u_username"),
+    u_name: $("u_name"),
+    u_password: $("u_password"),
+    u_viewer: $("u_viewer"),
+    u_editor: $("u_editor"),
+    u_statistics: $("u_statistics"),
+    btnUserDelete: $("btnUserDelete"),
+    btnUserSave: $("btnUserSave"),
 };
+
+let isAdmin = false;
+let currentEditUserId = null;
 
 function setMsg(t, bad = false) {
     el.msg.textContent = t;
@@ -84,6 +102,8 @@ function renderGroup(listEl, groupKey, items) {
         return;
     }
 
+    const showColorPicker = (groupKey === "status");
+
     // sort: erst sort, dann name
     const sorted = [...arr].sort((a, b) => {
         const sa = Number.isFinite(+a.sort) ? +a.sort : 9999;
@@ -94,12 +114,17 @@ function renderGroup(listEl, groupKey, items) {
 
     for (const it of sorted) {
         const row = document.createElement("div");
-        row.className = "token-row";
+        row.className = showColorPicker ? "token-row with-color" : "token-row";
         row.dataset.id = it.id;
+
+        const colorPickerHtml = showColorPicker
+            ? `<input type="color" class="tok-color" value="${it.color || '#e2e8f0'}" title="Farbe wählen" />`
+            : '';
 
         row.innerHTML = `
       <div class="token-id">${esc(it.id)}</div>
       <input class="inp token-name" value="${esc(it.name)}" />
+      ${colorPickerHtml}
       <label style="display:flex;align-items:center;gap:8px;justify-content:flex-end;">
         <input type="checkbox" class="tok-active" ${it.active ? "checked" : ""} />
         <span class="hint muted">active</span>
@@ -111,6 +136,7 @@ function renderGroup(listEl, groupKey, items) {
     `;
 
         const inpName = row.querySelector(".token-name");
+        const inpColor = row.querySelector(".tok-color");
         const chkActive = row.querySelector(".tok-active");
         const btnSave = row.querySelector(".tok-save");
         const btnDel = row.querySelector(".tok-del");
@@ -119,14 +145,17 @@ function renderGroup(listEl, groupKey, items) {
             const id = it.id;
             const name = (inpName.value || "").trim();
             const active = chkActive.checked ? 1 : 0;
-
+            const color = inpColor ? inpColor.value : null;
 
             if (!name) { setMsg("Name darf nicht leer sein", true); return; }
 
             setMsg("saving...");
+            const payload = { name, active };
+            if (color) payload.color = color;
+
             await api(`/api/settings/${encodeURIComponent(groupKey)}/${encodeURIComponent(id)}`, {
                 method: "PUT",
-                body: JSON.stringify({ name, active })
+                body: JSON.stringify(payload)
             });
             setMsg("saved ✅");
             await load(); // reload um konsistent zu bleiben
@@ -137,6 +166,9 @@ function renderGroup(listEl, groupKey, items) {
             if (e.key === "Enter") { e.preventDefault(); doSave().catch(err => setMsg(err.message, true)); }
         });
         chkActive.onchange = () => doSave().catch(err => setMsg(err.message, true));
+        if (inpColor) {
+            inpColor.onchange = () => doSave().catch(err => setMsg(err.message, true));
+        }
 
         btnDel.onclick = async (e) => {
             e.preventDefault();
@@ -174,7 +206,161 @@ async function load() {
   renderGroup(el.list_paid, "paid", s.paid || []);
   renderGroup(el.list_kurtaxe, "kurtaxe", s.kurtaxe || []);
 
+  // Check if admin and load users
+  try {
+    const session = await api("/api/session");
+    isAdmin = session.isAdmin || false;
+    if (isAdmin) {
+      el.usersPanel.style.display = "";
+      await loadUsers();
+    }
+  } catch (e) {
+    // Not admin, hide users panel
+    el.usersPanel.style.display = "none";
+  }
+
   setMsg("ok");
+}
+
+async function loadUsers() {
+  if (!isAdmin) return;
+  const data = await api("/api/users");
+  renderUsers(data.users || []);
+}
+
+function renderUsers(users) {
+  el.list_users.innerHTML = "";
+
+  if (!users.length) {
+    el.list_users.innerHTML = `<div class="hint muted">Keine User</div>`;
+    return;
+  }
+
+  for (const user of users) {
+    const row = document.createElement("div");
+    row.className = "token-row";
+    row.dataset.id = user.id;
+
+    const perms = [];
+    if (user.viewer) perms.push("👁 Viewer");
+    if (user.editor) perms.push("✏️ Editor");
+    if (user.statistics) perms.push("📊 Stats");
+    const permsStr = perms.length ? perms.join(", ") : "keine Rechte";
+
+    row.innerHTML = `
+      <div class="token-id">${esc(user.username)}</div>
+      <div style="font-weight:500;">${esc(user.name)}</div>
+      <div class="hint muted" style="font-size:11px;">${permsStr}</div>
+      <div class="token-actions">
+        <button class="btn tiny ghost user-edit">Edit</button>
+      </div>
+    `;
+
+    const btnEdit = row.querySelector(".user-edit");
+    btnEdit.onclick = (e) => {
+      e.preventDefault();
+      openUserDialog(user);
+    };
+
+    el.list_users.appendChild(row);
+  }
+}
+
+function openUserDialog(user = null) {
+  currentEditUserId = user ? user.id : null;
+
+  if (user) {
+    el.userDlgTitle.textContent = "User bearbeiten";
+    el.u_username.value = user.username;
+    el.u_name.value = user.name;
+    el.u_password.value = "";
+    el.u_password.placeholder = "Leer lassen um nicht zu ändern";
+    el.u_viewer.checked = Boolean(user.viewer);
+    el.u_editor.checked = Boolean(user.editor);
+    el.u_statistics.checked = Boolean(user.statistics);
+    el.btnUserDelete.style.display = "";
+  } else {
+    el.userDlgTitle.textContent = "Neuer User";
+    el.u_username.value = "";
+    el.u_name.value = "";
+    el.u_password.value = "";
+    el.u_password.placeholder = "Passwort";
+    el.u_viewer.checked = false;
+    el.u_editor.checked = false;
+    el.u_statistics.checked = false;
+    el.btnUserDelete.style.display = "none";
+  }
+
+  el.dlgUser.showModal();
+}
+
+el.dlgUser.addEventListener("close", async () => {
+  const val = el.dlgUser.returnValue;
+  if (val === "ok") {
+    await saveUser();
+  } else if (val === "delete") {
+    await deleteUserConfirm();
+  }
+});
+
+async function saveUser() {
+  const username = el.u_username.value.trim();
+  const name = el.u_name.value.trim();
+  const password = el.u_password.value.trim();
+
+  if (!username || !name) {
+    setMsg("Username und Name erforderlich", true);
+    return;
+  }
+
+  if (!currentEditUserId && !password) {
+    setMsg("Passwort erforderlich für neuen User", true);
+    return;
+  }
+
+  setMsg("saving...");
+
+  const payload = {
+    username,
+    name,
+    viewer: el.u_viewer.checked,
+    editor: el.u_editor.checked,
+    statistics: el.u_statistics.checked
+  };
+
+  if (password) payload.password = password;
+
+  try {
+    if (currentEditUserId) {
+      await api(`/api/users/${currentEditUserId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    } else {
+      await api("/api/users", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+    setMsg("saved ✅");
+    await loadUsers();
+  } catch (e) {
+    setMsg(e.message, true);
+  }
+}
+
+async function deleteUserConfirm() {
+  if (!currentEditUserId) return;
+  if (!confirm("User wirklich löschen?")) return;
+
+  setMsg("deleting...");
+  try {
+    await api(`/api/users/${currentEditUserId}`, { method: "DELETE" });
+    setMsg("deleted ✅");
+    await loadUsers();
+  } catch (e) {
+    setMsg(e.message, true);
+  }
 }
 
 
@@ -193,6 +379,7 @@ el.add_status.onclick  = () => addItem("status", el.new_status).catch(e => setMs
 el.add_source.onclick  = () => addItem("source", el.new_source).catch(e => setMsg(e.message, true));
 el.add_paid.onclick    = () => addItem("paid", el.new_paid).catch(e => setMsg(e.message, true));
 el.add_kurtaxe.onclick = () => addItem("kurtaxe", el.new_kurtaxe).catch(e => setMsg(e.message, true));
+el.add_user_btn.onclick = () => openUserDialog();
 
 
 [el.new_status, el.new_source, el.new_paid, el.new_kurtaxe].forEach((inp) => {

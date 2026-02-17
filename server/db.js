@@ -12,6 +12,26 @@ function makeId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36)}`;
 }
 
+// --------- USERS TABLE ----------
+function initUsers(db) {
+  ensureTable(db, `
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      viewer INTEGER NOT NULL DEFAULT 0,
+      editor INTEGER NOT NULL DEFAULT 0,
+      statistics INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_active ON users(active);
+  `);
+}
+
 // --------- SETTINGS TABLES ----------
 function initSettings(db) {
   ensureTable(db, `
@@ -25,6 +45,9 @@ function initSettings(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_setting_items_type_sort ON setting_items(type, sort, name);
   `);
+
+  // Farb-Spalte hinzufügen (nur für Status)
+  ensureColumn(db, "setting_items", "color", `ALTER TABLE setting_items ADD COLUMN color TEXT DEFAULT NULL`);
 
   // Defaults nur wenn noch leer
   const cnt = db.prepare(`SELECT COUNT(*) c FROM setting_items`).get().c;
@@ -102,7 +125,7 @@ function migrateBookingsToIds(db) {
 // --------- PUBLIC API for settings ----------
 export function listSettingItems(db, type) {
   return db.prepare(`
-    SELECT id,name,active,sort
+    SELECT id,name,active,sort,color
     FROM setting_items
     WHERE type=?
     ORDER BY sort ASC, name ASC
@@ -124,9 +147,10 @@ export function updateSettingItem(db, type, id, patch) {
   const name = (patch?.name != null) ? String(patch.name).trim().slice(0, 80) : cur.name;
   const active = (patch?.active != null) ? (patch.active ? 1 : 0) : cur.active;
   const sort = (patch?.sort != null) ? Math.trunc(Number(patch.sort) || 0) : cur.sort;
+  const color = (patch?.color !== undefined) ? (patch.color ? String(patch.color).slice(0, 7) : null) : cur.color;
 
-  return db.prepare(`UPDATE setting_items SET name=?, active=?, sort=? WHERE type=? AND id=?`)
-    .run(name, active, sort, type, id).changes;
+  return db.prepare(`UPDATE setting_items SET name=?, active=?, sort=?, color=? WHERE type=? AND id=?`)
+    .run(name, active, sort, color, type, id).changes;
 }
 
 export function deleteSettingItem(db, type, id) {
@@ -182,11 +206,79 @@ export function openDb(dbFile) {
   ensureColumn(db, "bookings", "laundry_fee",
   `ALTER TABLE bookings ADD COLUMN laundry_fee REAL NOT NULL DEFAULT 0`
 );
+  ensureColumn(db, "bookings", "kurtaxe_paid", `ALTER TABLE bookings ADD COLUMN kurtaxe_paid INTEGER NOT NULL DEFAULT 0`);
 
+  initUsers(db);
   initSettings(db);
   migrateBookingsToIds(db);
 
   return db;
+}
+
+// --------- USER MANAGEMENT ----------
+export function listUsers(db) {
+  return db.prepare(`
+    SELECT id, username, name, viewer, editor, statistics, active, created_at, updated_at
+    FROM users
+    WHERE active=1
+    ORDER BY name ASC
+  `).all();
+}
+
+export function getUserByUsername(db, username) {
+  return db.prepare(`
+    SELECT * FROM users WHERE username=? AND active=1
+  `).get(username);
+}
+
+export function getUserById(db, id) {
+  return db.prepare(`
+    SELECT id, username, name, viewer, editor, statistics, active, created_at, updated_at
+    FROM users WHERE id=?
+  `).get(id);
+}
+
+export function createUser(db, user) {
+  const nowIso = new Date().toISOString();
+  const stmt = db.prepare(`
+    INSERT INTO users (username, password_hash, name, viewer, editor, statistics, active, created_at, updated_at)
+    VALUES (@username, @password_hash, @name, @viewer, @editor, @statistics, @active, @created_at, @updated_at)
+  `);
+  const info = stmt.run({
+    ...user,
+    created_at: nowIso,
+    updated_at: nowIso
+  });
+  return info.lastInsertRowid;
+}
+
+export function updateUser(db, id, user) {
+  const nowIso = new Date().toISOString();
+  const stmt = db.prepare(`
+    UPDATE users SET
+      username=@username,
+      name=@name,
+      viewer=@viewer,
+      editor=@editor,
+      statistics=@statistics,
+      active=@active,
+      updated_at=@updated_at
+    WHERE id=@id
+  `);
+  return stmt.run({ id, ...user, updated_at: nowIso }).changes;
+}
+
+export function updateUserPassword(db, id, password_hash) {
+  const nowIso = new Date().toISOString();
+  return db.prepare(`UPDATE users SET password_hash=?, updated_at=? WHERE id=?`)
+    .run(password_hash, nowIso, id).changes;
+}
+
+export function deleteUser(db, id) {
+  // Soft delete
+  const nowIso = new Date().toISOString();
+  return db.prepare(`UPDATE users SET active=0, updated_at=? WHERE id=?`)
+    .run(nowIso, id).changes;
 }
 
 export function listYears(db) {
@@ -206,7 +298,7 @@ export function insertBooking(db, b) {
     INSERT INTO bookings (
   year, check_in, check_out, booked_at, persons, guest_name,
   price_total, cleaning_fee, cleaning_paid,
-  kurtaxe_total, kurkarte_included,
+  kurtaxe_total, kurtaxe_paid, kurkarte_included,
   laundry_booked, laundry_included, laundry_paid, laundry_fee,
   notes, created_at, updated_at,
   status_id, source_id, paid_status_id, kurtaxe_status_id,
@@ -214,7 +306,7 @@ export function insertBooking(db, b) {
 ) VALUES (
   @year, @check_in, @check_out, @booked_at, @persons, @guest_name,
   @price_total, @cleaning_fee, @cleaning_paid,
-  @kurtaxe_total, @kurkarte_included,
+  @kurtaxe_total, @kurtaxe_paid, @kurkarte_included,
   @laundry_booked, @laundry_included, @laundry_paid, @laundry_fee,
   @notes, @created_at, @updated_at,
   @status_id, @source_id, @paid_status_id, @kurtaxe_status_id,
@@ -235,7 +327,7 @@ export function updateBooking(db, id, b) {
       persons=@persons, guest_name=@guest_name,
       price_total=@price_total,
       cleaning_fee=@cleaning_fee, cleaning_paid=@cleaning_paid,
-      kurtaxe_total=@kurtaxe_total, kurkarte_included=@kurkarte_included,
+      kurtaxe_total=@kurtaxe_total, kurtaxe_paid=@kurtaxe_paid, kurkarte_included=@kurkarte_included,
       laundry_booked=@laundry_booked, laundry_included=@laundry_included, laundry_paid=@laundry_paid,
       laundry_fee=@laundry_fee,
       notes=@notes,

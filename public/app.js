@@ -7,8 +7,16 @@ const el = {
   btnLogout: $("btnLogout"),
   btnSettings: $("btnSettings"),
 
+  stats: $("stats"),
+  statRevenue: $("stat-revenue"),
+  statNet: $("stat-net"),
+  statKt: $("stat-kt"),
+  statClean: $("stat-clean"),
+  statLaundry: $("stat-laundry"),
+
   loginPanel: $("loginPanel"),
   dataPanel: $("dataPanel"),
+  username: $("username"),
   pw: $("pw"),
   btnLogin: $("btnLogin"),
   loginMsg: $("loginMsg"),
@@ -33,6 +41,7 @@ const el = {
   f_clean_paid: $("f_clean_paid"),
   f_kt: $("f_kt"),
   f_kt_status: $("f_kt_status"),
+  f_kt_paid: $("f_kt_paid"),
   f_kur_incl: $("f_kur_incl"),
   f_l_booked: $("f_l_booked"),
   f_l_incl: $("f_l_incl"),
@@ -44,6 +53,7 @@ const el = {
 
 let state = { years: [], year: 2026, bookings: [] };
 let editingId = null;
+let session = { isAdmin: false, viewer: false, editor: false, statistics: false };
 
 let tokens = { status: [], source: [], paid: [], kurtaxe: [] };
 let tokenMap = { status: {}, source: {}, paid: {}, kurtaxe: {} }; // id -> item
@@ -86,6 +96,12 @@ async function loadTokens() {
 function showLoggedIn(ok) {
   el.loginPanel.style.display = ok ? "none" : "";
   el.dataPanel.style.display = ok ? "" : "none";
+
+  // Statistics nur wenn Berechtigung vorhanden
+  el.stats.style.display = (ok && session.statistics) ? "flex" : "none";
+
+  // Edit-Buttons nur wenn Editor-Berechtigung
+  if (el.btnAdd) el.btnAdd.style.display = (ok && session.editor) ? "" : "none";
 }
 
 function escapeHtml(s) {
@@ -121,6 +137,7 @@ function fillForm(b) {
   el.f_clean_paid.checked = !!b.cleaning_paid;
   el.f_guest.value = b.guest_name ?? "";
   el.f_kt.value = b.kurtaxe_total ?? 0;
+  el.f_kt_paid.checked = !!b.kurtaxe_paid;
   el.f_clean.value = b.cleaning_fee ?? 100;
   el.f_l_fee.value = b.laundry_fee ?? 0;
 
@@ -152,7 +169,7 @@ function readForm() {
     cleaning_fee: Number(el.f_clean.value || 0),
     cleaning_paid: el.f_clean_paid.checked ? 1 : 0,
     kurtaxe_total: Number(el.f_kt.value || 0),
-
+    kurtaxe_paid: el.f_kt_paid.checked ? 1 : 0,
 
     kurkarte_included: el.f_kur_incl.checked ? 1 : 0,
     laundry_booked: el.f_l_booked.checked ? 1 : 0,
@@ -188,49 +205,119 @@ async function loadYears() {
   return true;
 }
 
+function calculateDays(checkIn, checkOut) {
+  if (!checkIn || !checkOut) return 0;
+  const start = new Date(checkIn);
+  const end = new Date(checkOut);
+  const diffTime = Math.abs(end - start);
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+}
+
+function updateStats() {
+  const bookings = state.bookings || [];
+
+  // Gesamteinnahmen
+  const totalRevenue = bookings.reduce((sum, b) => sum + Number(b.price_total || 0), 0);
+
+  // Offene Kurtaxe (nicht bezahlt)
+  const openKurtaxe = bookings
+    .filter(b => !b.kurtaxe_paid)
+    .reduce((sum, b) => sum + Number(b.kurtaxe_total || 0), 0);
+
+  // Offene Reinigung (nicht bezahlt)
+  const openCleaning = bookings
+    .filter(b => !b.cleaning_paid)
+    .reduce((sum, b) => sum + Number(b.cleaning_fee || 0), 0);
+
+  // Offene Wäsche (nicht bezahlt)
+  const openLaundry = bookings
+    .filter(b => b.laundry_booked && !b.laundry_paid)
+    .reduce((sum, b) => sum + Number(b.laundry_fee || 0), 0);
+
+  // Netto-Einnahmen (Einnahmen minus alle Kosten)
+  const totalCosts = bookings.reduce((sum, b) => {
+    return sum +
+      Number(b.kurtaxe_total || 0) +
+      Number(b.cleaning_fee || 0) +
+      (b.laundry_booked ? Number(b.laundry_fee || 0) : 0);
+  }, 0);
+  const netRevenue = totalRevenue - totalCosts;
+
+  // Anzeige aktualisieren
+  el.statRevenue.textContent = `${totalRevenue.toFixed(2)} €`;
+  el.statNet.textContent = `${netRevenue.toFixed(2)} €`;
+  el.statKt.textContent = `${openKurtaxe.toFixed(2)} €`;
+  el.statClean.textContent = `${openCleaning.toFixed(2)} €`;
+  el.statLaundry.textContent = `${openLaundry.toFixed(2)} €`;
+}
+
 function renderBookings() {
   const rows = (state.bookings || []).map(b => {
     const st = tokenMap.status[b.status_id]?.name || b.status || "";
+    const stColor = tokenMap.status[b.status_id]?.color || null;
     const src = tokenMap.source[b.source_id]?.name || b.source || "";
     const pay = tokenMap.paid[b.paid_status_id]?.name || b.paid_status || "";
     const kt = tokenMap.kurtaxe[b.kurtaxe_status_id]?.name || b.kurtaxe_status || "";
+    const days = calculateDays(b.check_in, b.check_out);
+
+    const statusStyle = stColor ? `style="background-color: ${escapeHtml(stColor)}; color: #000; font-weight: 600; padding: 6px 8px;"` : '';
+
+    // Kurtaxe mit Details (wie Wäsche)
+    const kurtaxeDisplay = b.kurtaxe_total > 0
+      ? `${Number(b.kurtaxe_total || 0).toFixed(2)} €${b.kurkarte_included ? " <span class='badge-mini'>inkl.</span>" : ""} <span class='badge-status'>${escapeHtml(kt)}</span>${b.kurtaxe_paid ? " ✅" : ""}`
+      : "-";
+
+    // Wäsche mit verbessertem Format
+    const laundryDisplay = b.laundry_booked
+      ? `🧺 ${Number(b.laundry_fee || 0).toFixed(2)} €${b.laundry_included ? " <span class='badge-mini'>inkl.</span>" : ""} ${b.laundry_paid ? "✅" : ""}`
+      : "-";
+
+    // Reinigung
+    const cleaningDisplay = b.cleaning_fee > 0
+      ? `${Number(b.cleaning_fee || 0).toFixed(2)} € ${b.cleaning_paid ? "✅" : ""}`
+      : "-";
 
     return `
       <tr data-id="${b.id}">
-        <td>${escapeHtml(st)}</td>
+        <td ${statusStyle}>${escapeHtml(st)}</td>
         <td>${escapeHtml(b.check_in)} → ${escapeHtml(b.check_out)}</td>
+        <td class="centered">${days > 0 ? days : "-"}</td>
         <td>${escapeHtml(b.guest_name || "")}</td>
         <td>${escapeHtml(src)}</td>
-        <td>${Number(b.persons || 1)}</td>
-        <td>${Number(b.price_total || 0).toFixed(2)}</td>
-        <td>${escapeHtml(pay)}</td>
-        <td>${Number(b.kurtaxe_total || 0).toFixed(2)} (${escapeHtml(kt)})</td>
-        <td>${b.laundry_booked
-        ? `🧺 ${Number(b.laundry_fee || 0).toFixed(2)} CHF${b.laundry_included ? " (inkl.)" : ""} ${b.laundry_paid ? "✅" : ""}`
-        : ""
-      }</td>
-
-        <td>${escapeHtml((b.notes || "").slice(0, 24))}${(b.notes || "").length > 24 ? "…" : ""}</td>
+        <td class="centered">${Number(b.persons || 1)}</td>
+        <td class="price">${Number(b.price_total || 0).toFixed(2)} €</td>
+        <td><span class='badge-status'>${escapeHtml(pay)}</span></td>
+        <td>${kurtaxeDisplay}</td>
+        <td>${cleaningDisplay}</td>
+        <td>${laundryDisplay}</td>
+        <td class="notes">${escapeHtml((b.notes || "").slice(0, 24))}${(b.notes || "").length > 24 ? "…" : ""}</td>
       </tr>
     `;
   }).join("");
+
+  const hintText = session.editor
+    ? "Click auf Zeile = Edit"
+    : "Nur Ansicht (keine Editor-Rechte)";
 
   el.table.innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Status</th><th>Datum</th><th>Gast</th><th>Quelle</th><th>Personen</th><th>Preis</th>
-          <th>Bezahlt</th><th>Kurtaxe</th><th>Wäsche</th><th>Notiz</th>
+          <th>Status</th><th>Datum</th><th>Tage</th><th>Gast</th><th>Quelle</th><th>Personen</th><th>Preis</th>
+          <th>Bezahlt</th><th>Kurtaxe</th><th>Reinigung</th><th>Wäsche</th><th>Notiz</th>
         </tr>
       </thead>
-      <tbody>${rows || `<tr><td colspan="10">Keine Einträge</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="12">Keine Einträge</td></tr>`}</tbody>
     </table>
-    <div class="hint" style="padding-top:10px;">Click auf Zeile = Edit</div>
+    <div class="hint" style="padding-top:10px;">${hintText}</div>
   `;
 
-  el.table.querySelectorAll("tr[data-id]").forEach(tr => {
-    tr.addEventListener("click", () => openEditDialog(Number(tr.dataset.id)));
-  });
+  if (session.editor) {
+    el.table.querySelectorAll("tr[data-id]").forEach(tr => {
+      tr.addEventListener("click", () => openEditDialog(Number(tr.dataset.id)));
+    });
+  }
 }
 
 
@@ -243,6 +330,7 @@ async function loadBookings() {
 
   state.bookings = data.bookings || [];
   renderBookings();
+  updateStats();
 }
 
 function recalcLaundry() {
@@ -292,16 +380,29 @@ async function openEditDialog(id) {
 
 async function login() {
   el.loginMsg.textContent = "";
+  const username = el.username.value.trim();
+  const password = el.pw.value;
+
   const { res, data } = await api("/api/login", {
     method: "POST",
-    body: JSON.stringify({ password: el.pw.value })
+    body: JSON.stringify({ username: username || undefined, password })
   });
 
   if (!res.ok) {
     if (data.error === "locked") el.loginMsg.textContent = "Zu viele Versuche – gesperrt.";
+    else if (data.error === "no_permissions") el.loginMsg.textContent = "Keine Berechtigungen vergeben.";
     else el.loginMsg.textContent = `Falsch. (${data.fails || 0}/3)`;
     return;
   }
+
+  // Session Daten speichern
+  session = {
+    isAdmin: data.isAdmin || false,
+    viewer: data.viewer || false,
+    editor: data.editor || false,
+    statistics: data.statistics || false,
+    name: data.name || "User"
+  };
 
   showLoggedIn(true);
   await loadTokens();
@@ -315,6 +416,7 @@ async function logout() {
 }
 
 el.btnLogin.addEventListener("click", login);
+el.username.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
 el.pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
 
 el.btnLogout.addEventListener("click", logout);
@@ -336,9 +438,21 @@ el.btnSave.addEventListener("click", async (e) => {
   }
 
   el.dlg.close();
+
+  // Jahr der gespeicherten Buchung merken
+  const savedYear = payload.year;
+
+  // Jahre neu laden
   await loadYears();
-  await loadBookings();
   await loadTokens();
+
+  // Zum Jahr der gespeicherten Buchung wechseln
+  if (savedYear && savedYear !== state.year) {
+    state.year = savedYear;
+    el.yearSel.value = savedYear;
+  }
+
+  await loadBookings(); // Wichtig: loadBookings ruft updateStats() auf
 });
 
 el.btnDelete.addEventListener("click", async (e) => {
@@ -350,17 +464,33 @@ el.btnDelete.addEventListener("click", async (e) => {
   await authed(`/api/bookings/${editingId}`, { method: "DELETE" });
   el.dlg.close();
   await loadYears();
-  await loadBookings();
   await loadTokens();
+  await loadBookings(); // Wichtig: loadBookings ruft updateStats() auf
 });
 
 (async () => {
   const ok = await loadYears();
+  if (ok) {
+    // Check session permissions
+    try {
+      const sessionData = await authed("/api/session");
+      session = {
+        isAdmin: sessionData.isAdmin || false,
+        viewer: sessionData.viewer || false,
+        editor: sessionData.editor || false,
+        statistics: sessionData.statistics || false,
+        name: sessionData.name || "User"
+      };
+    } catch (e) {
+      // Session check failed, not logged in
+      showLoggedIn(false);
+      return;
+    }
+  }
   showLoggedIn(ok);
   if (ok) {
     await loadTokens();
     await loadBookings();
-    await loadTokens();
   }
 })();
 

@@ -64,8 +64,57 @@
     <div id="list_kurtaxe" class="token-list"></div>
   </section>
 
+  <section class="panel" id="usersPanel" style="display:none;">
+    <div class="panel-head">
+      <div class="h">👤 Benutzerverwaltung</div>
+      <div class="panel-actions">
+        <button id="add_user_btn" class="btn tiny primary">+ Neuer User</button>
+      </div>
+    </div>
+    <div id="list_users" class="token-list"></div>
+  </section>
+
   <div id="msg" class="hint muted" style="padding-top:10px;"></div>
 </main>
+
+<dialog id="dlgUser">
+  <form method="dialog" class="dlg">
+    <div class="dlg-title" id="userDlgTitle">Neuer User</div>
+
+    <div class="dlg-section">
+      <div class="section-title">Zugangsdaten</div>
+      <div class="grid">
+        <label>Username <input id="u_username" type="text" placeholder="username" required></label>
+        <label>Name <input id="u_name" type="text" placeholder="Max Mustermann" required></label>
+        <label>Passwort <input id="u_password" type="text" placeholder="passwort"></label>
+      </div>
+    </div>
+
+    <div class="dlg-section">
+      <div class="section-title">Berechtigungen</div>
+      <div class="payment-grid">
+        <label class="payment-checkbox">
+          <input id="u_viewer" type="checkbox">
+          <span>Viewer (Buchungen sehen)</span>
+        </label>
+        <label class="payment-checkbox">
+          <input id="u_editor" type="checkbox">
+          <span>Editor (Bearbeiten & Anlegen)</span>
+        </label>
+        <label class="payment-checkbox">
+          <input id="u_statistics" type="checkbox">
+          <span>Statistik (Einnahmen sehen)</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="dlg-actions">
+      <button class="btn ghost" value="cancel">Cancel</button>
+      <button id="btnUserDelete" class="btn ghost" value="delete">Delete</button>
+      <button id="btnUserSave" class="btn primary" value="ok">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="/settings.js"></script>
 </body>
