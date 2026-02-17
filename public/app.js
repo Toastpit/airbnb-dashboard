@@ -164,10 +164,7 @@ function renderGuests() {
 }
 
 function addGuest() {
-  if (guests.length >= 4) {
-    showToast("Maximal 4 Gäste möglich", "error");
-    return;
-  }
+
   guests.push({ name: "", age: 0 });
   renderGuests();
 }
